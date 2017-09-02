@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html" charset="UTF-8" >
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"/>
+  <title>Druid问题及解决 | Hexo</title>
+  <meta name="description" content="" />
+  <meta name="HandheldFriendly" content="True" />
+  <meta name="MobileOptimized" content="320" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link rel="stylesheet" type="text/css" href="/css/screen.css" />
+  <link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Noto+Serif:400,700,400italic|Open+Sans:700,400" />
+
+  <meta name="generator" content="Hexo">
+
+  
+  
+  
+
+  
+</head>
+
+
+<body class="post-template">
+
+  <header class="site-head"  style="background-image: url(//blog.ghost.org/content/images/2013/Nov/cover.png)" >
+    <div class="vertical">
+        <div class="site-head-content inner">
+             <a class="blog-logo" href="/"><img src="//blog.ghost.org/content/images/2013/Nov/bloglogo_1-1.png" alt="Blog Logo"/></a> 
+            <h1 class="blog-title">Hexo</h1>
+            <h2 class="blog-description"></h2>
+        </div>
+    </div>
+</header>
+  
+
+<main class="content" role="main">
+  <article class="post">
+    <span class="post-meta">
+      <time datetime="2017-09-02T11:27:21.000Z" itemprop="datePublished">
+          2017-09-02
+      </time>
+    
+</span>
+    <h1 class="post-title">Druid问题及解决</h1>
+    <section class="post-content">
+      <h2 id="1-关于Druid-pending-task-报警以及误报消除（2017-06-22）"><a href="#1-关于Druid-pending-task-报警以及误报消除（2017-06-22）" class="headerlink" title="1. 关于Druid pending task 报警以及误报消除（2017-06-22）"></a>1. 关于Druid pending task 报警以及误报消除（2017-06-22）</h2><pre><code>druid提上来一套报警，核心逻辑是curl http://10.39.2.161:8090/druid/indexer/v1/pendingTasks -H &quot;Content-Type:application/json&quot; -X GET获取overload的pending的task，如果有task长期pending证明druid集群有问题，要么是资源不够，要么是有资源但是没有分配任务，导致任务处于pending状态，但是有时候在整点时刻会收到报警短信。到线上环境观察发现没有task处于pending状态，查看overload的日志，整点时刻会提交大量任务，所有的任务在running之前都会短暂的处于pending状态，大概持续几十毫秒，如果有大量任务都有几十毫秒的pending状态，那么curl请求很有可能会捕捉到这一行为，从而发出报警短信，所以现在没做其他处理，让报警服务把获取到的pending状态的task打印出来，看一下是不是只持续几十毫秒，等下一下报警的时候再看这个问题。
+</code></pre><h2 id="2-关于实施查询的延迟问题（2017-07-03）"><a href="#2-关于实施查询的延迟问题（2017-07-03）" class="headerlink" title="2. 关于实施查询的延迟问题（2017-07-03）"></a>2. 关于实施查询的延迟问题（2017-07-03）</h2><pre><code>用户反映fyalldimension-test1的查询时延严重，在查询50分钟之后数据才趋于固定，而之前使用sparkstreaming入redis的时候，数据延迟几分钟。 下表是用户查询的结果，所有查询时间段是相同的， &quot;intervals&quot;: &quot;2017-07-02T16:00:00.000Z/2017-07-03T08:20:00.000Z&quot;, 用户从16:20刚过就开始查，一直到17:13之后才稳定。同时用户进行过时间戳比较，还没发现有写入时间戳和本地时间戳超过20分钟的。
+   16:23  4187666770
+   16:31  4254156264
+   16:32  4257247347
+   16:33  4262472723
+   16:37  4293654970
+   16:41  4323229837
+   16:44  4346392255
+   16:47  4370042705
+   16:50  4388952373
+   16:53  4408228544
+   16:56  4423678662
+   17:00  4450052142
+   17:13  4455014775
+   17:20  4455014775
+起初怀疑是消息延迟所致，但是考虑到之前他们的数据没有这么久的延迟，以及没有超过20分钟的，明显与观察不符。他们怀疑是Druid构建索引的时间太长，但是看过log并结合使用经验明显不可能。
+之后，在UTC时间2017-07-03T09:00-09:10之间多次查询 &quot;intervals&quot;: &quot;2017-07-03T08:00:00.000Z/2017-07-03T09:00:00.000Z“的数据，数据已经稳定，此时这个realtime任务还在接收数据（queryGranularity:HOUR，windowPeriod: PT10M），这个现象说明，数据延迟绝对没有超过10分钟。
+后来了解到，他们的queryGranularity是HOUR，才想到，在用户查询的过程中，数据是不断摄入的，2017-07-02T16:00:00Z - 2017-07-03T08:20:00Z 的效果相当于2017-07-02T16:00:00Z - 2017-07-03T09:00:00Z ，因此即便查询时间已经过去，但是还是看到它不停地涨，同时即便数据没有任何延迟，也是会看到这种现象的。
+如果用户反映查询时间段内的数据一直增长，需要由浅入深考虑以下几点：1、 查询intervals用的是北京时间，这样可能一直涵盖最新的时间点； 2、数据源延迟问题  3、queryGranularity问题，也就是该条记录的问题  4、Druid构建索引的速度，这个还没有去验证过
+如果想消除这种现象的话，可以在配置文件里面把HOUR改成MINUTE，但是有可能更改后segment膨胀很多（这种情况对应现有粒度下聚合效果特别好），也可能变化不大（这种情况对应现有粒度下聚合效果一般），这个需要测试。
+用户现有segment一小时最大450M，如果真的需要MINUTE的查询粒度的话，假如在HOUR粒度下聚合效果良好，那么最大有可能每小时segment大小是 450 M * 60 = 27G（这种情况对应的是，每个小时出现的数据在每个分钟内都能出现，数据的出现完全均匀分布，猜测基本不可能出现这种情况），每天数据量是 648G。如果真的有这种需求，不建议减小segment时间长度，还是1小时，但是增加partition数量，控制在每个segment大小1G，那么需要27个peon为其跑任务，光这个业务就要准备54个槽位应对切换峰值，就是把现有集群规模翻一番，计算资源说完了再说存储资源。
+集群现有空闲存储空间34T = 34,000G，剩余空间全部用来存储这个业务能够存储 52天。
+如果这种需求真的跑下来，查询速度将不会快，查询一小时扫过的数据量已经超过其业务一天扫过的数据量还要大2.5倍，查询一天扫过的数据量已经是现在查2个月的数据量，因此将会特别慢，即便实时入估计也得半实时查，甚至不如落地到HDFS跑Hive了。
+以上是最坏的情况，具体如何需要测试。当然问过用户他不需要分钟粒度的查询维持现状。如果有上述假设的变态的需求的话，需要这么去考虑。   
+所以算了一圈，如果再最坏情况下，会为解决一个问题引入了新问题，估计效果还不如原来好，所以在这种情况下应该拒绝这种变态需求。如果在不是很恶劣的情况下资源消耗应该没有这么多，这就需要去权衡减小查询粒度值不值得了。应该先测一把，然后再下结论。
+</code></pre><h2 id="3-关于peon实时任务-tmp路径满导致相应segment创建失败（该问题反映出Druid以PEON为执行主体的实时任务架构的脆弱性，一旦实时任务出现问题，实时数据将全部丢失，除非人工干预，否则数据将不能恢复。）"><a href="#3-关于peon实时任务-tmp路径满导致相应segment创建失败（该问题反映出Druid以PEON为执行主体的实时任务架构的脆弱性，一旦实时任务出现问题，实时数据将全部丢失，除非人工干预，否则数据将不能恢复。）" class="headerlink" title="3. 关于peon实时任务/tmp路径满导致相应segment创建失败（该问题反映出Druid以PEON为执行主体的实时任务架构的脆弱性，一旦实时任务出现问题，实时数据将全部丢失，除非人工干预，否则数据将不能恢复。）"></a>3. 关于peon实时任务/tmp路径满导致相应segment创建失败（该问题反映出Druid以PEON为执行主体的实时任务架构的脆弱性，一旦实时任务出现问题，实时数据将全部丢失，除非人工干预，否则数据将不能恢复。）</h2><pre><code>第一反映是他的实时任务没有成功创建，因为之前两周他的实时任务曾多次因为数据源有问题而缺失中间的segment。但是他反映其任务全部发送成功。
+想到从HDFS（所有PEON启动的realtime日志都会存在druid.indexer.logs.directory=hdfs://ns1/user/druid/localStorage/middle中，在$DRUID_HOME/config/middleManager/runtime.properties中）上找一下相关日志，如果日志存在，那么实时任务已经跑过那么就不是用户的问题了，缺失时间段的日志全部存在，这下可以肯定是任务本身有问题了。
+联想到是本地空间不够，2.140的/tmp路径易满，同时发现2.140的middleManager启动时候尚未加-Djava.io.tmpdir=/data0/druid/tmp 参数，这样的话该参数的值默认为/tmp。后来通过查日志，发现所有失败任务的确全都是跑在2.140上的。
+正确启动middleManager的指令应该是nohup java -Djava.io.tmpdir=/data0/druid/tmp -Xmx1g -Xms1g -XX:+UseConcMarkSweepGC -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -Duser.timezone=UTC -Dfile.encoding=UTF-8 -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager -classpath config/_common/:config/middleManager/:/usr/local/hadoop-2.4.0/etc/hadoop:lib/* io.druid.cli.Main server middleManager &gt;&gt; /data0/druid/middlemanager/middle.log 2&gt;&gt;/data0/druid/middlemanager/middle_error.log &amp;
+解决方法：
+    1) 先使用接口&lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/disable把2.140这个middleManager给disable掉，效果是：该middleManager不会再接收新任务，等跑完现有的实时任务后，便可以重启。（具体指令是：curl http://10.39.2.140:9080/druid/worker/v1/disable -H &quot;Content-Type:application/json&quot; -X POST ）。所有槽位72个，目前峰值占用槽位53个，2.140提供槽位15个，因此他自己disabled之后没有影响。
+    2) Disable之后使用接口 &lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/enabled 查看其状态，发现已经是disabled，同时经过几个整点后，发现也确实没有再接收新的任务。（验证disable的具体指令是： curl http://10.39.2.140:9080/druid/worker/v1/enabled -H &quot;Content-Type:application/json&quot; -X GET ，返回结果{&quot;10.39.2.140:9080&quot;:false} ,证明没有enabled ）
+    3) 等该middleManager上所有任务结束后，杀掉该进程，使用正确的启动方式启动，指定-Djava.io.tmpdir=/data0/druid/tmp
+    4) 再次启动middleManager进程就能自动变为enabled。若不重启，需要使用接口 &lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/enable 将middleManager进行enable，这样就能正常工作（具体指令 curl http://10.39.2.140:9080/druid/worker/v1/enable -H &quot;Content-Type:application/json&quot; -X POST）
+与Peon写入本地的路径相关的配置项
+$DRUID_HOME/config/middleManager/runtime.properties文件中
+    Property
+    Description
+    Default
+    生产集群配置
+   druid.indexer.task.baseDir    Base temporary working directory.     /tmp    /data0/druid/index
+   druid.indexer.task.baseTaskDir     Base temporary working directory for tasks.     /tmp/persistent/tasks    /data0/druid/index/persistent/tasks
+   druid.indexer.task.hadoopWorkingPath     Temporary working directory for Hadoop tasks.     /tmp/druid-indexing    无，默认。目前不使用该功能
+   druid.indexer.runner.javaOpts    -X Java options to run the peon in its own JVM.    -Djava.io.tmpdir默认为/tmp    -Djava.io.tmpdir=/data0/druid/tmp（部分）
+   druid.segmentCache.locations              [{&quot;path&quot;: &quot;/data0/druid/indexCache&quot;, &quot;maxSize&quot;\: 5000000000000}]
+</code></pre><h2 id="4-关于PEON启动的参数-—-紧接上一个问题"><a href="#4-关于PEON启动的参数-—-紧接上一个问题" class="headerlink" title="4. 关于PEON启动的参数 — 紧接上一个问题"></a>4. 关于PEON启动的参数 — 紧接上一个问题</h2><pre><code>在$DRUID_HOME/config/middleManager/runtime.properties中，
+已经有如下配置：
+druid.indexer.runner.javaOpts=-server -Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=100 -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -Duser.timezone=UTC -Dfile.encoding=UTF-8 -Djava.io.tmpdir=/data0/druid/tmp。该参数指定PEON的启动参数。
+很奇怪的是，明明已经指定 -Djava.io.tmpdir=/data0/druid/tmp，可为什么在启动middleManager时候没有加入 -Djava.io.tmpdir=/data0/druid/tmp就写入默认/tmp呢？如果该参数指定的值没被加载的话，那么启动的PEON的内存就应该和middleManager一样大是1G而不是看有的将近10G。
+后来看Runtime Configuration（http://druid.io/docs/0.8.2/configuration/indexing-service.html），发现对参数druid.indexer.runner.javaOpts的解释：“-X Java options to run the peon in its own JVM.”。才发现该参数中指定的值只加载 -X参数，-D就忽略了，也就印证了之前的现象。
+关于这个现象的代码解释：
+原因在 io.druid.indexing.overlord.ForkingTaskRunner中，Line 177 - Line 200
+</code></pre><figure class="highlight plain"><figcaption><span>Override task specific javaOpts</span></figcaption><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div><div class="line">5</div><div class="line">6</div><div class="line">7</div><div class="line">8</div><div class="line">9</div><div class="line">10</div><div class="line">11</div><div class="line">12</div><div class="line">13</div><div class="line">14</div><div class="line">15</div><div class="line">16</div><div class="line">17</div><div class="line">18</div><div class="line">19</div><div class="line">20</div><div class="line">21</div><div class="line">22</div><div class="line">23</div></pre></td><td class="code"><pre><div class="line">Object taskJavaOpts = task.getContextValue(</div><div class="line">    &quot;druid.indexer.runner.javaOpts&quot;</div><div class="line">);</div><div class="line">if (taskJavaOpts != null) &#123;</div><div class="line">    Iterables.addAll(</div><div class="line">    command,</div><div class="line">    new QuotableWhiteSpaceSplitter((String) taskJavaOpts)</div><div class="line">    );</div><div class="line">&#125;</div><div class="line">for (String propName : props.stringPropertyNames()) &#123;</div><div class="line">    for (String allowedPrefix : config.getAllowedPrefixes()) &#123;   // &quot;com.metamx&quot;,&quot;druid&quot;,&quot;io.druid&quot;,&quot;user.timezone&quot;,&quot;file.encoding&quot;,&quot;java.io.tmpdir&quot;,&quot;hadoop&quot;</div><div class="line">        if (propName.startsWith(allowedPrefix)) &#123;</div><div class="line">            command.add(</div><div class="line">                String.format(</div><div class="line">                    &quot;-D%s=%s&quot;,</div><div class="line">                    propName,</div><div class="line">                    props.getProperty(propName)</div><div class="line">                )</div><div class="line">            );</div><div class="line">        &#125;</div><div class="line">    &#125;</div><div class="line">&#125;</div><div class="line">// 不过关于这段逻辑是有问题的（不过不涉及本问题），在Druid 0.8.3中已经被修复，详见 https://github.com/druid-io/druid/issues/1841</div></pre></td></tr></table></figure>
+<pre><code>这是将middleManager的启动参数中，先读入 $DRUID_HOME/config/middleManager/runtime.properties中druid.indexer.runner.javaOpts 定义的参数，再读入以AllowedPrefixes开头的配置项的内容读出并作为Fork出的Peon的参数，该类的代码采用反射无法追下去，但是可以看到props的类型是JAVA原生的Properties，猜测这个就是JVM参数，也就是MiddleManager运行参数。由于JVM同名参数后出现的覆盖前面出现的，这么做的结果就是$DRUID_HOME/config/middleManager/runtime.properties中druid.indexer.runner.javaOpts对应的 -D参数全部被覆盖，也就符合官网说的-X Java options to run the peon in its own JVM。这么做是方便传递参数？保证系统稳定？毕竟middleManager这时候已经起来了，这时候参数是可以用的？
+</code></pre><h2 id="5-关于Tranquility任务开多副本-分区"><a href="#5-关于Tranquility任务开多副本-分区" class="headerlink" title="5. 关于Tranquility任务开多副本/分区"></a>5. 关于Tranquility任务开多副本/分区</h2><pre><code>在提交任务的配置文件里面，添加如下配置：
+</code></pre>  <figure class="highlight plain"><figcaption><span>--> properties</span></figcaption><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div></pre></td><td class="code"><pre><div class="line">&quot;properties&quot; : &#123;</div><div class="line">   &quot;task.partitions&quot; : &quot;1&quot;,</div><div class="line">   &quot;task.replicants&quot; : &quot;1&quot;</div><div class="line">&#125;</div></pre></td></tr></table></figure>
+<pre><code>多副本：
+把task.replicants由默认的1，改为大于1。同一时interval内的任务可以相互替代。
+经过测试，发现同一interval的2个task能够相互避开不在同时一台机器上（在只有一个middleManager的测试集群上测试的时候Tranquility还一直报错，从侧面印证了这个特征）。同时测试过，干掉其中一个不影响查询结果。
+多分区：
+task.partitions更改值大于1。同一interval内的task不可相互替代，都分担该时段内数据的一部分。
+代码解释之后给出。
+</code></pre><h2 id="6-tmp路径满导致实时任务的segment创建失败"><a href="#6-tmp路径满导致实时任务的segment创建失败" class="headerlink" title="6. /tmp路径满导致实时任务的segment创建失败"></a>6. /tmp路径满导致实时任务的segment创建失败</h2><p>   类似问题： 路径满导致实时任务失败</p>
+<h2 id="7-Druid-Peon任务多Replicants在-handoff阶段-HDFS-报-Lease-mismatch-导致任务失败"><a href="#7-Druid-Peon任务多Replicants在-handoff阶段-HDFS-报-Lease-mismatch-导致任务失败" class="headerlink" title="7. Druid Peon任务多Replicants在 handoff阶段 HDFS 报 Lease mismatch 导致任务失败"></a>7. Druid Peon任务多Replicants在 handoff阶段 HDFS 报 Lease mismatch 导致任务失败</h2><h2 id="8-Druid长时间跨度查询慢"><a href="#8-Druid长时间跨度查询慢" class="headerlink" title="8. Druid长时间跨度查询慢"></a>8. Druid长时间跨度查询慢</h2><h2 id="9-Druid支持多Hadoop集群"><a href="#9-Druid支持多Hadoop集群" class="headerlink" title="9. Druid支持多Hadoop集群"></a>9. Druid支持多Hadoop集群</h2><h2 id="10-Druid-BUG-–-某segment无法加载，有更新版本的同segment产生，仍旧尝试加载那个不能加载的"><a href="#10-Druid-BUG-–-某segment无法加载，有更新版本的同segment产生，仍旧尝试加载那个不能加载的" class="headerlink" title="10. Druid BUG – 某segment无法加载，有更新版本的同segment产生，仍旧尝试加载那个不能加载的"></a>10. Druid BUG – 某segment无法加载，有更新版本的同segment产生，仍旧尝试加载那个不能加载的</h2><h2 id="11-Druid-Overlord-发生主备切换所有实时任务失败"><a href="#11-Druid-Overlord-发生主备切换所有实时任务失败" class="headerlink" title="11. Druid Overlord 发生主备切换所有实时任务失败"></a>11. Druid Overlord 发生主备切换所有实时任务失败</h2><h2 id="12-Druid-Broker-Full-GC-进程卡死"><a href="#12-Druid-Broker-Full-GC-进程卡死" class="headerlink" title="12. Druid Broker Full GC 进程卡死"></a>12. Druid Broker Full GC 进程卡死</h2><h2 id="13-Druid批量任务优化相关"><a href="#13-Druid批量任务优化相关" class="headerlink" title="13. Druid批量任务优化相关"></a>13. Druid批量任务优化相关</h2><pre><code>Druid批量任务调优
+Druid批量任务数据时间列集中数据量大而失败
+</code></pre><h2 id="14-Druid入数配置文件，timestamp写在dimension导致查询错误"><a href="#14-Druid入数配置文件，timestamp写在dimension导致查询错误" class="headerlink" title="14. Druid入数配置文件，timestamp写在dimension导致查询错误"></a>14. Druid入数配置文件，timestamp写在dimension导致查询错误</h2><pre><code>  做select查询时报错如下：
+<figure class="highlight plain"><figcaption><span>"error" : "Invalid format: \"1504001344000\" is malformed at \"4000\"" &#125;```</span></figcaption><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div></pre></td><td class="code"><pre><div class="line">  一个错误的配置如下：     </div><div class="line">```&quot;dimensions&quot; : [&quot;timestamp&quot;,&quot;group&quot;,&quot;cluster&quot;,&quot;topic&quot;,&quot;partition&quot;]</div></pre></td></tr></table></figure>
+
+ 错在，把timestamp这个时间列写在了dimension，去掉就行了
+ 可以看到，把timestamp当成维度了
+</code></pre>
+    </section>
+    <footer class="post-footer">
+      <section class="author">
+    <h4>John Doe</h4>
+    <p>A designer, developer and entrepreneur. Spends his time travelling the world with a bag of kites. Likes journalism and publishing platforms.</p>
+</section>
+      <section class="share">
+    <h4>Share this post</h4>
+    <a class="icon-twitter" href="http://twitter.com/share?url=http://yoursite.com/2017/09/02/Druid问题及解决/"
+       onclick="window.open(this.href, 'twitter-share', 'width=550,height=235');return false;">
+        <span class="hidden">Twitter</span>
+    </a>
+    <a class="icon-facebook" href="https://www.facebook.com/sharer/sharer.php?u=http://yoursite.com/2017/09/02/Druid问题及解决/"
+       onclick="window.open(this.href, 'facebook-share','width=580,height=296');return false;">
+        <span class="hidden">Facebook</span>
+    </a>
+    <a class="icon-google-plus" href="https://plus.google.com/share?url=http://yoursite.com/2017/09/02/Druid问题及解决/"
+       onclick="window.open(this.href, 'google-plus-share', 'width=490,height=530');return false;">
+        <span class="hidden">Google+</span>
+    </a>
+</section>
+    </footer>
+  </article>
+  <nav class="pagination" role="pagination">
+    
+    <span class="page-number">•</span>
+    
+</nav>
+  <div id="comment" class="comments-area">
+    <h1 class="title"><a href="#disqus_comments" name="disqus_comments">Comments</a></h1>
+
+    
+</div>
+</main>
+
+
+  
+<footer class="site-footer">
+  
+  <div class="inner">
+     <section class="copyright">All content copyright <a href="/">Hexo</a> &copy; 2014 &bull; All rights reserved.</section>
+     <section class="poweredby">Proudly published with <a class="icon-ghost" href="http://zespia.tw/hexo/">Hexo</a></section>
+  </div>
+</footer>
+
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+<script type="text/javascript" src="/js/jquery.fitvids.js"></script>
+<script type="text/javascript" src="/js/index.js"></script>
+
+
+
+
+
+
+</body>
+</html>
