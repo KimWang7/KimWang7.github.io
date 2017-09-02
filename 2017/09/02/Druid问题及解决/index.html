@@ -4,7 +4,7 @@
 <head>
   <meta http-equiv="Content-Type" content="text/html" charset="UTF-8" >
   <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"/>
-  <title>Druid问题及解决 | Hexo</title>
+  <title>Druid问题及解决 | Je Vois Tout</title>
   <meta name="description" content="" />
   <meta name="HandheldFriendly" content="True" />
   <meta name="MobileOptimized" content="320" />
@@ -13,7 +13,7 @@
   <link rel="stylesheet" type="text/css" href="/css/screen.css" />
   <link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Noto+Serif:400,700,400italic|Open+Sans:700,400" />
 
-  <meta name="generator" content="Hexo">
+  <meta name="generator" content="Je Vois Tout">
 
   
   
@@ -29,7 +29,7 @@
     <div class="vertical">
         <div class="site-head-content inner">
              <a class="blog-logo" href="/"><img src="//blog.ghost.org/content/images/2013/Nov/bloglogo_1-1.png" alt="Blog Logo"/></a> 
-            <h1 class="blog-title">Hexo</h1>
+            <h1 class="blog-title">Je Vois Tout</h1>
             <h2 class="blog-description"></h2>
         </div>
     </div>
@@ -46,8 +46,9 @@
 </span>
     <h1 class="post-title">Druid问题及解决</h1>
     <section class="post-content">
-      <h2 id="1-关于Druid-pending-task-报警以及误报消除（2017-06-22）"><a href="#1-关于Druid-pending-task-报警以及误报消除（2017-06-22）" class="headerlink" title="1. 关于Druid pending task 报警以及误报消除（2017-06-22）"></a>1. 关于Druid pending task 报警以及误报消除（2017-06-22）</h2><pre><code>druid提上来一套报警，核心逻辑是curl http://10.39.2.161:8090/druid/indexer/v1/pendingTasks -H &quot;Content-Type:application/json&quot; -X GET获取overload的pending的task，如果有task长期pending证明druid集群有问题，要么是资源不够，要么是有资源但是没有分配任务，导致任务处于pending状态，但是有时候在整点时刻会收到报警短信。到线上环境观察发现没有task处于pending状态，查看overload的日志，整点时刻会提交大量任务，所有的任务在running之前都会短暂的处于pending状态，大概持续几十毫秒，如果有大量任务都有几十毫秒的pending状态，那么curl请求很有可能会捕捉到这一行为，从而发出报警短信，所以现在没做其他处理，让报警服务把获取到的pending状态的task打印出来，看一下是不是只持续几十毫秒，等下一下报警的时候再看这个问题。
-</code></pre><h2 id="2-关于实施查询的延迟问题（2017-07-03）"><a href="#2-关于实施查询的延迟问题（2017-07-03）" class="headerlink" title="2. 关于实施查询的延迟问题（2017-07-03）"></a>2. 关于实施查询的延迟问题（2017-07-03）</h2><pre><code>用户反映fyalldimension-test1的查询时延严重，在查询50分钟之后数据才趋于固定，而之前使用sparkstreaming入redis的时候，数据延迟几分钟。 下表是用户查询的结果，所有查询时间段是相同的， &quot;intervals&quot;: &quot;2017-07-02T16:00:00.000Z/2017-07-03T08:20:00.000Z&quot;, 用户从16:20刚过就开始查，一直到17:13之后才稳定。同时用户进行过时间戳比较，还没发现有写入时间戳和本地时间戳超过20分钟的。
+      <p>   在这个帖子里面记录使用Druid过程中出现的问题及其解决，大问题另开帖子，小问题就准备持续追加</p>
+<h2 id="1-关于Druid-pending-task-报警以及误报消除（2017-06-22）"><a href="#1-关于Druid-pending-task-报警以及误报消除（2017-06-22）" class="headerlink" title="1. 关于Druid pending task 报警以及误报消除（2017-06-22）"></a>1. 关于Druid pending task 报警以及误报消除（2017-06-22）</h2><pre><code>druid提上来一套报警，核心逻辑是curl http://&lt;Overlord_IP&gt;:&lt;Overlord_Port&gt;/druid/indexer/v1/pendingTasks -H &quot;Content-Type:application/json&quot; -X GET获取overload的pending的task，如果有task长期pending证明druid集群有问题，要么是资源不够，要么是有资源但是没有分配任务，导致任务处于pending状态，但是有时候在整点时刻会收到报警短信。到线上环境观察发现没有task处于pending状态，查看overload的日志，整点时刻会提交大量任务，所有的任务在running之前都会短暂的处于pending状态，大概持续几十毫秒，如果有大量任务都有几十毫秒的pending状态，那么curl请求很有可能会捕捉到这一行为，从而发出报警短信，所以现在没做其他处理，让报警服务把获取到的pending状态的task打印出来，看一下是不是只持续几十毫秒，等下一下报警的时候再看这个问题。
+</code></pre><h2 id="2-关于实施查询的延迟问题（2017-07-03）"><a href="#2-关于实施查询的延迟问题（2017-07-03）" class="headerlink" title="2. 关于实施查询的延迟问题（2017-07-03）"></a>2. 关于实施查询的延迟问题（2017-07-03）</h2><pre><code>用户反映某DataSource的查询时延严重，在查询50分钟之后数据才趋于固定，而之前使用sparkstreaming入redis的时候，数据延迟几分钟。 下表是用户查询的结果，所有查询时间段是相同的， &quot;intervals&quot;: &quot;2017-07-02T16:00:00.000Z/2017-07-03T08:20:00.000Z&quot;, 用户从16:20刚过就开始查，一直到17:13之后才稳定。同时用户进行过时间戳比较，还没发现有写入时间戳和本地时间戳超过20分钟的。
    16:23  4187666770
    16:31  4254156264
    16:32  4257247347
@@ -77,10 +78,10 @@
 联想到是本地空间不够，2.140的/tmp路径易满，同时发现2.140的middleManager启动时候尚未加-Djava.io.tmpdir=/data0/druid/tmp 参数，这样的话该参数的值默认为/tmp。后来通过查日志，发现所有失败任务的确全都是跑在2.140上的。
 正确启动middleManager的指令应该是nohup java -Djava.io.tmpdir=/data0/druid/tmp -Xmx1g -Xms1g -XX:+UseConcMarkSweepGC -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -Duser.timezone=UTC -Dfile.encoding=UTF-8 -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager -classpath config/_common/:config/middleManager/:/usr/local/hadoop-2.4.0/etc/hadoop:lib/* io.druid.cli.Main server middleManager &gt;&gt; /data0/druid/middlemanager/middle.log 2&gt;&gt;/data0/druid/middlemanager/middle_error.log &amp;
 解决方法：
-    1) 先使用接口&lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/disable把2.140这个middleManager给disable掉，效果是：该middleManager不会再接收新任务，等跑完现有的实时任务后，便可以重启。（具体指令是：curl http://10.39.2.140:9080/druid/worker/v1/disable -H &quot;Content-Type:application/json&quot; -X POST ）。所有槽位72个，目前峰值占用槽位53个，2.140提供槽位15个，因此他自己disabled之后没有影响。
-    2) Disable之后使用接口 &lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/enabled 查看其状态，发现已经是disabled，同时经过几个整点后，发现也确实没有再接收新的任务。（验证disable的具体指令是： curl http://10.39.2.140:9080/druid/worker/v1/enabled -H &quot;Content-Type:application/json&quot; -X GET ，返回结果{&quot;10.39.2.140:9080&quot;:false} ,证明没有enabled ）
+    1) 先使用接口&lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/disable把2.140这个middleManager给disable掉，效果是：该middleManager不会再接收新任务，等跑完现有的实时任务后，便可以重启。（具体指令是：curl http://&lt;MiddleManager_IP&gt;:&lt;MiddleManager_Port&gt;/druid/worker/v1/disable -H &quot;Content-Type:application/json&quot; -X POST ）。所有槽位72个，目前峰值占用槽位53个，2.140提供槽位15个，因此他自己disabled之后没有影响。
+    2) Disable之后使用接口 &lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/enabled 查看其状态，发现已经是disabled，同时经过几个整点后，发现也确实没有再接收新的任务。（验证disable的具体指令是： curl http://&lt;MiddleManager_IP&gt;:&lt;MiddleManager_Port&gt;/druid/worker/v1/enabled -H &quot;Content-Type:application/json&quot; -X GET ，返回结果{&quot;&lt;MiddleManager_IP&gt;:&lt;MiddleManager_Port&gt;&quot;:false} ,证明没有enabled ）
     3) 等该middleManager上所有任务结束后，杀掉该进程，使用正确的启动方式启动，指定-Djava.io.tmpdir=/data0/druid/tmp
-    4) 再次启动middleManager进程就能自动变为enabled。若不重启，需要使用接口 &lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/enable 将middleManager进行enable，这样就能正常工作（具体指令 curl http://10.39.2.140:9080/druid/worker/v1/enable -H &quot;Content-Type:application/json&quot; -X POST）
+    4) 再次启动middleManager进程就能自动变为enabled。若不重启，需要使用接口 &lt;MiddleManager_IP:PORT&gt;/druid/worker/v1/enable 将middleManager进行enable，这样就能正常工作（具体指令 curl http://&lt;MiddleManager_IP&gt;:&lt;MiddleManager_Port&gt;/druid/worker/v1/enable -H &quot;Content-Type:application/json&quot; -X POST）
 与Peon写入本地的路径相关的配置项
 $DRUID_HOME/config/middleManager/runtime.properties文件中
     Property
@@ -158,7 +159,7 @@ Druid批量任务数据时间列集中数据量大而失败
 <footer class="site-footer">
   
   <div class="inner">
-     <section class="copyright">All content copyright <a href="/">Hexo</a> &copy; 2014 &bull; All rights reserved.</section>
+     <section class="copyright">All content copyright <a href="/">Je Vois Tout</a> &copy; 2014 &bull; All rights reserved.</section>
      <section class="poweredby">Proudly published with <a class="icon-ghost" href="http://zespia.tw/hexo/">Hexo</a></section>
   </div>
 </footer>
